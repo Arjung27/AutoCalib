@@ -180,9 +180,41 @@ def calibration(images):
     K_final[1,1] = optimization.x[3]
     K_final[1,2] = optimization.x[4]
     K_final[2,2] = 1
+    distortion_coeff[0] = optimization.x[5]
+    distortion_coeff[1] = optimization.x[6]
 
-    print(optimization.x[5], optimization.x[6])
     print('K_final: ', K_final)
+    print('distortion_coeff: ', distortion_coeff.T)
+    undistored_img = []
+
+    for i, img in enumerate(images):
+
+        image = cv2.imread(img)
+        undistored_img.append(cv2.undistort(image, K_final, distortion_coeff))
+        # cv2.imshow("undistort", cv2.resize(undistored_img[i], (512,512)))
+        # cv2.waitKey(0)
+
+    pixel_error = optim_K(optimization.x, corner_pts, homography_final)
+    print(np.mean(pixel_error))
+
+    # Checking the gold submission error
+    # A_trial = np.array([[2063.8982, 2.2726, 764.5863],
+    #                     [0, 2042.7786, 1333.7452],
+    #                     [0, 0, 1]])
+    # dis_coeff = np.array([0.003755, -0.019014, 0, 0, 0])
+
+    # undistored_img = []
+
+    # for i, img in enumerate(images):
+
+    #     image = cv2.imread(img)
+    #     undistored_img.append(cv2.undistort(image, A_trial, dis_coeff))
+    #     # cv2.imshow("undistort", cv2.resize(undistored_img[i], (512,512)))
+    #     # cv2.waitKey(0)
+    # initial_esstimate = np.float32([A_trial[0, 0], A_trial[0,1], A_trial[0,2], \
+    #                     A_trial[1,1], A_trial[1,2], 0, 0])
+    # pixel_error = optim_K(initial_esstimate, corner_pts, homography_final)
+    # print(np.mean(pixel_error))
 
 
 if __name__ == '__main__':
