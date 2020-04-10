@@ -6,6 +6,78 @@ from scipy.optimize import least_squares
 import os
 import argparse
 
+def compute_Rt(mat, homo):
+
+    mat_inv = np.linalg.inv(mat)
+    sign = np.linalg.det(np.matmul(mat_inv, homo))
+
+    lam = ((np.linalg.norm(np.matmul(mat_inv, homo[:,0])) \
+        + (np.linalg.norm(np.matmul(mat_inv, homo[:,1]))))/2) ** (-1)
+
+    if sign < 0:
+        A = np.matmul(mat_inv, homo) * (-lam)
+    else:
+        A = np.matmul(mat_inv, homo) * (lam)
+
+    r1 = A[:,0]
+    r2 = A[:,1]
+    r3 = np.cross(r1, r2)
+    t = A[:,2][:,None]
+    R_mat = np.vstack([r1, r2, r3]).T
+    U, S, V = np.linalg.svd(R_mat)
+    R_mat_final = np.matmul(U, V)
+    # print(R_mat_final, t)
+    Rt = np.hstack([R_mat_final, t])
+    
+    return Rt
+
+def optim_K(init_est, corners, homo_mats):
+
+    A_est = np.zeros((3,3))
+    A_est[0,0] = init_est[0]
+    A_est[0,1] = init_est[1]
+    A_est[0,2] = init_est[2]
+    A_est[1,1] = init_est[3]
+    A_est[1,2] = init_est[4]
+    A_est[2,2] = 1
+    world_pts = []
+    K_mat = np.array([init_est[5], init_est[6]])
+    for i in range(6):
+        for j in range(9):
+            world_pts.append([21.5*(j+1),21.5*(i+1),0,1])
+    
+    world_xyz = np.float32(world_pts).T
+    error = []
+
+    for i, H in enumerate(homo_mats):
+
+        R_mat = compute_Rt(A_est, H)
+        pts_calc = np.matmul(R_mat, world_xyz)
+        pts_calc = pts_calc/pts_calc[2]
+        Proj_mat = np.matmul(A_est, R_mat)
+        img_pts = np.matmul(Proj_mat, world_xyz)
+        img_pts = img_pts/img_pts[2]
+
+        u = img_pts[0]
+        v = img_pts[1]
+        x = pts_calc[0]
+        y = pts_calc[1]
+        u_est = u + (u - A_est[0,2])*(K_mat[0]*(x**2 + y**2) + K_mat[1]*((x**2 + y**2)**2))
+        v_est = v + (v - A_est[1,2])*(K_mat[0]*(x**2 + y**2) + K_mat[1]*((x**2 + y**2)**2))
+
+        projection = corners[i,:,0,:]
+        # print(projection)
+        projection = np.reshape(projection,(54, 2))
+        reprojection = np.vstack([u_est, v_est]).T
+        difference = np.subtract(reprojection, projection)
+        error_ = (np.linalg.norm(difference, axis=1))**2
+        error.append(error_)
+
+    error = np.float32(error)
+    error = np.reshape(error, (702))
+
+    return error
+
 def compute_v(H, i, j):
 
     t1 = H[0][i]*H[0][j]
@@ -27,7 +99,6 @@ def solve_for_K(homography_mats):
         v12 = compute_v(H, 0, 1)
         v11 = compute_v(H, 0, 0)
         v22 = compute_v(H, 1, 1)
-        # v_mat = np.vstack((v12.T, (v11 - v22).T))
         V_mat[2*i, :] = v12.T
         V_mat[2*i + 1, :] = (v11 - v22).T
 
@@ -79,6 +150,7 @@ def calibration(images):
         ret, corners = cv2.findChessboardCorners(img_gray, (9,6), \
             cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_FAST_CHECK + cv2.CALIB_CB_NORMALIZE_IMAGE)
         corners2 = cv2.cornerSubPix(img_gray, corners, (11,11),(-1,-1), criteria)
+        # print(corners2.shape)
         corner_pts.append(corners2)
         img_pts = np.array([[corners2[0][0]],
                            [corners2[8][0]],
@@ -89,14 +161,28 @@ def calibration(images):
         homography_init.append(homogrphy_mat)
 
     homography_final = np.float32(homography_init)
-    corner_pts = np.float32(corners2)
+    corner_pts = np.float32(corner_pts)
 
     K = solve_for_K(homography_final)
     initial_esstimate = np.float32([K[0, 0], K[0,1], K[0,2], \
                         K[1,1], K[1,2], 0, 0])
 
+    print(corner_pts.shape)
+    # optim_K(initial_esstimate, corner_pts, homography_final)
     optimization = least_squares(optim_K, x0=np.squeeze(initial_esstimate), method='lm', args=(corner_pts, homography_final))
 
+    K_final = np.zeros((3,3))
+    distortion_coeff = np.zeros((5,1))
+
+    K_final[0,0] = optimization.x[0]
+    K_final[0,1] = optimization.x[1]
+    K_final[0,2] = optimization.x[2]
+    K_final[1,1] = optimization.x[3]
+    K_final[1,2] = optimization.x[4]
+    K_final[2,2] = 1
+
+    print(optimization.x[5], optimization.x[6])
+    print('K_final: ', K_final)
 
 
 if __name__ == '__main__':
