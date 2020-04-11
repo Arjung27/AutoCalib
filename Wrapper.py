@@ -6,6 +6,26 @@ from scipy.optimize import least_squares
 import os
 import argparse
 
+def RMSerror(A, K, Homographies, corner_points):
+
+    w_xy = []
+    for i in range(6):
+        for j in range(9):
+            w_xy.append([21.5*(j+1),21.5*(i+1),0])
+    w_xyz = np.array(w_xy)
+
+    mean = 0
+    error = np.zeros([2,1])
+    for i, H in enumerate(Homographies):
+        Rt = compute_Rt(A, H)
+        img_points,_ = cv2.projectPoints(w_xyz, Rt[:,0:3], Rt[:,3], A, K)
+        img_points = np.array(img_points)
+        errors = np.linalg.norm(corner_points[i,:,0,:]-img_points[:,0,:], axis=1)
+        error = np.concatenate([error, np.reshape(errors, (errors.shape[0], 1))])
+    mean_error = np.mean(error)
+
+    return mean_error
+
 def compute_Rt(mat, homo):
 
     mat_inv = np.linalg.inv(mat)
@@ -26,7 +46,6 @@ def compute_Rt(mat, homo):
     R_mat = np.vstack([r1, r2, r3]).T
     U, S, V = np.linalg.svd(R_mat)
     R_mat_final = np.matmul(U, V)
-    # print(R_mat_final, t)
     Rt = np.hstack([R_mat_final, t])
     
     return Rt
@@ -112,11 +131,8 @@ def solve_for_K(homography_mats):
     B33 = b[5]
 
     v0 = (B12*B13 - B11*B23)/(B11*B22 - B12**2)
-    print("v0: ", v0)
     lam = B33 - ((B13 ** 2) + v0*(B12*B13 - B11*B23))/B11
-    print("lambda: ", lam)
     alpha = np.sqrt(lam/B11)
-    print("alpha: ", alpha)
     beta = np.sqrt(lam*B11/(B11*B22 - B12 ** 2))
     gamma = -B12* (alpha ** 2) * beta/lam
     u0 = (gamma*v0/beta) - B13* (alpha ** 2)/lam
@@ -167,8 +183,6 @@ def calibration(images):
     initial_esstimate = np.float32([K[0, 0], K[0,1], K[0,2], \
                         K[1,1], K[1,2], 0, 0])
 
-    print(corner_pts.shape)
-    # optim_K(initial_esstimate, corner_pts, homography_final)
     optimization = least_squares(optim_K, x0=np.squeeze(initial_esstimate), method='lm', args=(corner_pts, homography_final))
 
     K_final = np.zeros((3,3))
@@ -191,11 +205,14 @@ def calibration(images):
 
         image = cv2.imread(img)
         undistored_img.append(cv2.undistort(image, K_final, distortion_coeff))
-        # cv2.imshow("undistort", cv2.resize(undistored_img[i], (512,512)))
-        # cv2.waitKey(0)
 
-    pixel_error = optim_K(optimization.x, corner_pts, homography_final)
-    print(np.mean(pixel_error))
+    reprojection_error = RMSerror(K_final, distortion_coeff, \
+                        homography_final, corner_pts)
+
+    print("RMSerror: ", reprojection_error)
+    # pixel_error = optim_K(optimization.x, corner_pts, homography_final)
+    # print(np.mean(pixel_error))
+
 
     # Checking the gold submission error
     # A_trial = np.array([[2063.8982, 2.2726, 764.5863],
