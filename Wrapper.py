@@ -6,7 +6,7 @@ from scipy.optimize import least_squares
 import os
 import argparse
 
-def RMSerror(A, K, Homographies, corner_points):
+def RMSerror(A, K, Homographies, corner_points, images, output_dir):
 
     w_xy = []
     for i in range(6):
@@ -16,10 +16,24 @@ def RMSerror(A, K, Homographies, corner_points):
 
     mean = 0
     error = np.zeros([2,1])
+    undistored_img = []
+
     for i, H in enumerate(Homographies):
+        ####
+        filename = os.path.join(output_dir, images[i].split('/')[-1])
+        image = cv2.imread(images[i])
+        undistored_img.append(cv2.undistort(image, A, K))
+        ####
+
         Rt = compute_Rt(A, H)
         img_points,_ = cv2.projectPoints(w_xyz, Rt[:,0:3], Rt[:,3], A, K)
         img_points = np.array(img_points)
+
+        for pt in img_points:
+
+            cv2.circle(undistored_img[i], (int(pt[0][0]), int(pt[0][1])), 5, [0,255,0], 5)
+            cv2.imwrite(filename, undistored_img[i])
+
         errors = np.linalg.norm(corner_points[i,:,0,:]-img_points[:,0,:], axis=1)
         error = np.concatenate([error, np.reshape(errors, (errors.shape[0], 1))])
     mean_error = np.mean(error)
@@ -31,8 +45,10 @@ def compute_Rt(mat, homo):
     mat_inv = np.linalg.inv(mat)
     sign = np.linalg.det(np.matmul(mat_inv, homo))
 
-    lam = ((np.linalg.norm(np.matmul(mat_inv, homo[:,0])) \
-        + (np.linalg.norm(np.matmul(mat_inv, homo[:,1]))))/2) ** (-1)
+    # lam = ((np.linalg.norm(np.matmul(mat_inv, homo[:,0])) \
+    #     + (np.linalg.norm(np.matmul(mat_inv, homo[:,1]))))/2) ** (-1)
+
+    lam = np.linalg.norm(np.matmul(mat_inv, homo[:,0])) ** (-1)
 
     if sign < 0:
         A = np.matmul(mat_inv, homo) * (-lam)
@@ -145,7 +161,7 @@ def solve_for_K(homography_mats):
 
     return K
 
-def calibration(images):
+def calibration(images, output_dir):
 
     homography_init = []
     image_rgb = []
@@ -168,6 +184,13 @@ def calibration(images):
         corners2 = cv2.cornerSubPix(img_gray, corners, (11,11),(-1,-1), criteria)
         # print(corners2.shape)
         corner_pts.append(corners2)
+
+        # for cnr in corners2:
+        #     print(cnr)
+        #     cv2.circle(image_original, (cnr[0][0], cnr[0][1]), 5, [0,255,0], 5)
+        #     cv2.imshow("Corners", cv2.resize(image_original, (720, 720)))
+        #     cv2.waitKey(0)
+        # exit(-1)
         img_pts = np.array([[corners2[0][0]],
                            [corners2[8][0]],
                            [corners2[53][0]],
@@ -201,44 +224,31 @@ def calibration(images):
     print('distortion_coeff: ', distortion_coeff.T)
     undistored_img = []
 
-    for i, img in enumerate(images):
+    # for i, img in enumerate(images):
 
-        image = cv2.imread(img)
-        undistored_img.append(cv2.undistort(image, K_final, distortion_coeff))
+    #     filename = os.path.join(output_dir, img.split('/')[-1])
+    #     image = cv2.imread(img)
+    #     undistored_img.append(cv2.undistort(image, K_final, distortion_coeff))
+    #     cv2.imwrite(filename, undistored_img[i])
+        # cv2.imwrite(filename, cv2.resize(undistored_img[i], (720, 720)))
 
     reprojection_error = RMSerror(K_final, distortion_coeff, \
-                        homography_final, corner_pts)
+                        homography_final, corner_pts, images, output_dir)
 
     print("RMSerror: ", reprojection_error)
     # pixel_error = optim_K(optimization.x, corner_pts, homography_final)
     # print(np.mean(pixel_error))
 
-
-    # Checking the gold submission error
-    # A_trial = np.array([[2063.8982, 2.2726, 764.5863],
-    #                     [0, 2042.7786, 1333.7452],
-    #                     [0, 0, 1]])
-    # dis_coeff = np.array([0.003755, -0.019014, 0, 0, 0])
-
-    # undistored_img = []
-
-    # for i, img in enumerate(images):
-
-    #     image = cv2.imread(img)
-    #     undistored_img.append(cv2.undistort(image, A_trial, dis_coeff))
-    #     # cv2.imshow("undistort", cv2.resize(undistored_img[i], (512,512)))
-    #     # cv2.waitKey(0)
-    # initial_esstimate = np.float32([A_trial[0, 0], A_trial[0,1], A_trial[0,2], \
-    #                     A_trial[1,1], A_trial[1,2], 0, 0])
-    # pixel_error = optim_K(initial_esstimate, corner_pts, homography_final)
-    # print(np.mean(pixel_error))
-
-
 if __name__ == '__main__':
 
     Parser = argparse.ArgumentParser()
     Parser.add_argument('--images', default='./Calibration_Imgs', help='Enter the path of the images')
+    Parser.add_argument('--output_dir', default='./Output_imgs', help='Enter the path to store undistorted images')
     Flags = Parser.parse_args()
+
+    if not os .path.exists(Flags.output_dir):
+        os.makedirs(Flags.output_dir)
+
     directory = os.path.join(Flags.images, '*.jpg')
     images = glob.glob(directory, recursive=True)
-    calibration(images)
+    calibration(images, Flags.output_dir)
